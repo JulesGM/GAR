@@ -1,23 +1,60 @@
 import argparse
 import glob
 import json
+import importlib
+import logging
 import os
 from pathlib import Path
+import random
+import re
 import sys
 
 sys.path.insert(0, "../")
 sys.path.insert(0, "../dpr")
 
+import rich
+from rouge_score import rouge_scorer, scoring
 import torch
 from torch.utils.data import DataLoader
-from rouge_score import rouge_scorer, scoring
 # from pytorch_lightning.loggers import WandbLogger
+import transformers
+
 
 from utils.tokenizers import SimpleTokenizer
 from data.qa_validation import exact_match_score, has_answer
 from lightning_base import BaseTransformer, generic_train, get_linear_schedule_with_warmup
 from utils_gen import SummarizationDataset, choose_gpu, label_smoothed_nll_loss, freeze_params
 from conf import add_generic_args, add_model_specific_args
+
+
+LOGGER = logging.getLogger(__name__)
+
+_parse_version_version_string_pat = re.compile(
+    r"^([0-9]+\.[0-9]+\.[0-9]+)"
+)
+
+def _parse_version(version_string):
+    version_string = _parse_version_version_string_pat.match(
+        version_string
+    ).group(1)
+    return tuple(map(int, version_string.split(".")))
+
+def check_version(module, lb=None, ub=None):
+
+    if isinstance(module, str):
+        module_name = module
+        assert lb or ub, (lb, ub)
+        LOGGER.debug(f"Importing {module_name}...")
+        module = importlib.__import__(module_name)
+        LOGGER.debug(f"Done importing {module_name}.")
+    
+    version = _parse_version(module.__version__)
+    if lb:
+        assert lb <= version[:len(lb)], (lb, version)
+    if ub: 
+        assert version[:len(ub)] < ub, (ub, version)
+
+check_version(transformers, (2, 11), (2, 12))
 
 
 def calculate_rouge(output_lns, reference_lns, score_path=None):
@@ -86,25 +123,44 @@ class SummarizationTrainer(BaseTransformer):
 
     def _step(self, batch):
         pad_token_id = self.tokenizer.pad_token_id
-        source_ids, source_mask, y = batch["source_ids"], batch["source_mask"], batch["target_ids"]
+        source_ids = batch["source_ids"]
+        source_mask = batch["source_mask"]
+        y = batch["target_ids"]
 
         y_ids = y[:, :-1].contiguous()
-        lm_labels = y[:, 1:].clone()  # next tokens (different from newest HF implementation)
+        lm_labels = y[:, 1:].clone()  
+        # next tokens (different from newest HF implementation)
         lm_labels[y[:, 1:] == pad_token_id] = -100
 
         # outputs = self(source_ids, attention_mask=source_mask, decoder_input_ids=y_ids, lm_labels=lm_labels, )
         # loss = outputs[0]
         # add use_cache=False when HF==3
-        outputs = self(source_ids, attention_mask=source_mask, decoder_input_ids=y_ids, use_cache=False)
+        
+        # idx = random.randint(0, len(source_ids) - 1)
+        # print(f"{source_ids.shape = }")
+        # print(self.tokenizer.decode(source_ids[idx]))
+        # print(self.tokenizer.decode(y_ids[idx]))
+
+        outputs = self(
+            source_ids, 
+            attention_mask=source_mask, 
+            decoder_input_ids=y_ids, 
+            use_cache=False,
+        )
         lm_logits = outputs[0]
         if self.hparams.label_smoothing == 0:
             # Same behavior as modeling_bart.py, besides ignoring pad_token_id
             ce_loss_fct = torch.nn.CrossEntropyLoss()
-            loss = ce_loss_fct(lm_logits.view(-1, lm_logits.shape[-1]), lm_labels.view(-1))
+            loss = ce_loss_fct(
+                lm_logits.view(-1, lm_logits.shape[-1]), 
+                lm_labels.view(-1),
+            )
         else:
             lprobs = torch.nn.functional.log_softmax(lm_logits, dim=-1)
             loss, nll_loss = label_smoothed_nll_loss(
-                lprobs, lm_labels, self.hparams.label_smoothing
+                lprobs, 
+                lm_labels, 
+                self.hparams.label_smoothing,
             )
 
         return loss
@@ -253,6 +309,70 @@ class SummarizationTrainer(BaseTransformer):
             return self.get_dataloader("train", batch_size=self.hparams.eval_batch_size, num_workers=4)
 
 
+
+# class SummarizationTrainerWithRetriever(SummarizationTrainer):
+#     mode = "language-modeling"
+
+#     def __init__(self, hparams, retriever, concatenation_function):
+#         super().__init__(hparams)
+#         self.retriever = retriever
+
+#     def forward(self, input_ids, attention_mask, decoder_input_ids, use_cache):
+#         # Retrieve
+
+#         # Concatenate
+
+#         return self.model(input_ids, attention_mask, decoder_input_ids, use_cache)
+
+#     def _step(self, batch):
+#         pad_token_id = self.tokenizer.pad_token_id
+#         source_ids, source_mask, y = batch["source_ids"], batch["source_mask"], batch["target_ids"]
+
+#         y_ids = y[:, :-1].contiguous()
+#         lm_labels = y[:, 1:].clone()  # next tokens (different from newest HF implementation)
+        
+#         # Convert padding tokens to -100
+#         lm_labels[y[:, 1:] == pad_token_id] = -100
+
+#         # outputs = self(source_ids, attention_mask=source_mask, decoder_input_ids=y_ids, lm_labels=lm_labels, )
+#         # loss = outputs[0]
+#         # add use_cache=False when HF==3
+        
+#         outputs = self(source_ids, attention_mask=source_mask, decoder_input_ids=y_ids, use_cache=False)
+#         lm_logits = outputs[0]
+#         if self.hparams.label_smoothing == 0:
+#             # Same behavior as modeling_bart.py, besides ignoring pad_token_id
+#             ce_loss_fct = torch.nn.CrossEntropyLoss()
+#             loss = ce_loss_fct(lm_logits.view(-1, lm_logits.shape[-1]), lm_labels.view(-1))
+#         else:
+#             lprobs = torch.nn.functional.log_softmax(lm_logits, dim=-1)
+#             loss, nll_loss = label_smoothed_nll_loss(
+#                 lprobs, lm_labels, self.hparams.label_smoothing
+#             )
+
+#         return loss
+
+    def decode(self, batch):
+        pad_token_id = self.tokenizer.pad_token_id
+        source_ids, source_mask, y = SummarizationDataset.trim_seq2seq_batch(batch, pad_token_id)
+        generated_ids = self.model.generate(
+            input_ids=source_ids,
+            attention_mask=source_mask,
+            num_beams=1,
+            max_length=self.hparams.max_target_length,
+            # repetition_penalty=2.5,
+            # length_penalty=1.0,
+            early_stopping=True
+        )
+
+        preds = [
+            self.tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+            for g in generated_ids
+        ]
+        target = [self.tokenizer.decode(t, skip_special_tokens=True, clean_up_tokenization_spaces=False) for t in y]
+        return preds, target
+
+
 def main(args):
     model = SummarizationTrainer(args)
 
@@ -298,9 +418,8 @@ if __name__ == "__main__":
     add_model_specific_args(parser, os.getcwd())
     args = parser.parse_args()
     print('output_dir=', args.output_dir)
-    if 'workspace' in str(args.data_dir) or 'mount' in str(args.data_dir):
-        choose_gpu(min_gpu_memory=args.min_gpu_memory, retry=True)
-    else:
-        args.n_gpu = args.gpus = torch.cuda.device_count()
+
+    args.n_gpu = args.gpus = torch.cuda.device_count()
+    args.n_nodes = int(os.getenv("SLURM_NNODES", 1))
 
     main(args)

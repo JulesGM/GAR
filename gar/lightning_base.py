@@ -43,11 +43,20 @@ def set_seed(args: argparse.Namespace):
 
 
 class BaseTransformer(pl.LightningModule):
-    def __init__(self, hparams: argparse.Namespace, num_labels=None, mode="base", **config_kwargs):
+    def __init__(
+        self, 
+        hparams: argparse.Namespace, 
+        num_labels=None, 
+        mode="base", 
+        **config_kwargs,
+        ):
         "Initialize a model."
 
         super().__init__()
+        
         self.hparams = hparams
+
+
         cache_dir = self.hparams.cache_dir if self.hparams.cache_dir else None
         self.config = AutoConfig.from_pretrained(
             self.hparams.config_name if self.hparams.config_name else self.hparams.model_name_or_path,
@@ -182,7 +191,7 @@ def generic_train(model: BaseTransformer, args: argparse.Namespace, logger=True,
         print('[warning] will not save ckpt!')
 
     train_params = {}
-    if args.gpus > 1:
+    if args.gpus > 1 or args.n_nodes > 1:
         train_params["distributed_backend"] = "ddp"
 
     # lr_logger = LearningRateLogger()
@@ -199,6 +208,7 @@ def generic_train(model: BaseTransformer, args: argparse.Namespace, logger=True,
         val_check_interval=args.val_check_interval,
         # overfit_batches=2,
         limit_val_batches=args.limit_val_batches,
+        num_nodes=args.n_nodes,
         **train_params,
         # fast_dev_run=True,
     )

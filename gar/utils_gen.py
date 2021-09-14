@@ -7,6 +7,9 @@ import time
 from multiprocessing import get_context, Pool
 from time import sleep
 from datetime import datetime
+
+
+import rich
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -126,12 +129,23 @@ def choose_gpu(n_gpus=1, min_gpu_memory=9000, retry=False, sleep_time=30):
     os.environ["CUDA_VISIBLE_DEVICES"] = visible_gpus
 
 
-def encode_file(tokenizer, data_path, max_length, pad_to_max_length=True, return_tensors="pt"):
+def encode_file(
+    tokenizer, 
+    data_path, 
+    max_length, 
+    pad_to_max_length=True, 
+    return_tensors="pt",
+):
     examples = []
+    rich.print(f"[red purple]{max_length = }")
     with open(data_path, encoding='utf8') as f:
         for text in tqdm(f.readlines()):
             tokenized = tokenizer.batch_encode_plus(
-                [text], max_length=max_length, pad_to_max_length=pad_to_max_length, return_tensors=return_tensors,
+                [text], 
+                max_length=max_length, 
+                truncation=True,
+                pad_to_max_length=pad_to_max_length, 
+                return_tensors=return_tensors,
             )
             examples.append(tokenized)
     return examples
@@ -153,12 +167,14 @@ class SummarizationDataset(Dataset):
     def __init__(
             self,
             tokenizer,
-            data_dir="./cnn-dailymail/cnn_dm/",
-            type_path="train",
-            max_source_length=1024,
-            max_target_length=56,
+            data_dir,
+            type_path,
+            max_source_length,
+            max_target_length,
     ):
         super().__init__()
+
+        rich.print(f"[red bold]{data_dir = }")
         self.tokenizer = tokenizer
         self.type_path = type_path
         if 'bart' in str(tokenizer):
@@ -183,14 +199,19 @@ class SummarizationDataset(Dataset):
                 pickle.dump(self.source, open(os.path.join(data_dir, type_path + f".source.processed{suffix}"), 'wb'))
                 pickle.dump(self.target, open(os.path.join(data_dir, type_path + f".target.processed{suffix}"), 'wb'))
         else:
+            assert False
             if os.path.exists(os.path.join('/workspace', type_path + ".source_ids.json")):
                 print(f'loading {type_path}.source_ids.json from local to speed up!')
                 self.source = json.load(open(os.path.join('/workspace', type_path + ".source_ids.json")))
             else:
                 self.source = json.load(open(os.path.join(data_dir, type_path + ".source_ids.json")))
-            self.target = encode_file(tokenizer, os.path.join(data_dir, type_path + ".target"), max_target_length)
+
+            target_file = os.path.join(data_dir, type_path + ".target")
+            print(f"### {target_file}")
+            self.target = encode_file(tokenizer, target_file, max_target_length)
 
         if self.generate_relevance:
+            assert False
             self.target = json.load(open(os.path.join(data_dir, type_path + ".relevance_labels.json")))
 
         self.all_answers = None
@@ -278,6 +299,7 @@ class SummarizationDataset(Dataset):
                     new_source_ids.append(source_ids[start: end + 1])
                 source_ids = torch.cat(new_source_ids)
         else:
+            assert False
             if self.generate_relevance:
                 source_ids, src_mask, target_ids = self.prepare_relevance_label(index, add_A=True)
             else:
@@ -293,7 +315,10 @@ class SummarizationDataset(Dataset):
         #         self.kw_labels_cache[index] = self.create_kw_labels(answers, target_ids)
         #     kw_labels = self.kw_labels_cache[index]
 
-        return {"source_ids": source_ids, "source_mask": src_mask, "target_ids": target_ids, 'kw_labels': kw_labels}
+        return {
+            "source_ids": source_ids, 
+            "source_mask": src_mask, 
+            "target_ids": target_ids, 'kw_labels': kw_labels}
 
     @staticmethod
     def trim_seq2seq_batch(batch, pad_token_id):
