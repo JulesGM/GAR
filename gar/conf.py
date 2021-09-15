@@ -130,8 +130,8 @@ def add_generic_args(parser, root_dir):
     parser.add_argument("--ckpt_mode", type=str, default='max')
     parser.add_argument("--save_top_k", type=int, default=1)
 
-    parser.add_argument("--gpus", type=int, default=1)
-    parser.add_argument("--n_gpu", type=int, default=1)
+    # parser.add_argument("--gpus", type=int, default=1)
+    # parser.add_argument("--n_gpu", type=int, default=1)
     # parser.add_argument("--nproc_per_node", type=int, default=2)
     parser.add_argument("--min_gpu_memory", type=int, default=13000)
 

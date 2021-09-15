@@ -66,6 +66,11 @@ def calculate_rouge(output_lns, reference_lns, score_path=None):
         aggregator.add_scores(scores)
 
     result = aggregator.aggregate()
+    
+    print(f"{output_lns = }")
+    print(f"{reference_lns = }")
+    print(f"{result = }")
+
     if score_path is not None:
         score_file = Path(score_path).open("w")
         score_file.write(
@@ -88,9 +93,13 @@ class SummarizationTrainer(BaseTransformer):
         )
         self.all_answers = {}
         if os.path.exists(os.path.join(self.hparams.data_dir, "val.target.json")):
-            self.all_answers['val'] = json.load(open(os.path.join(self.hparams.data_dir, "val.target.json")))
+            self.all_answers['val'] = json.load(
+                open(os.path.join(self.hparams.data_dir, "val.target.json"))
+            )
         if os.path.exists(os.path.join(self.hparams.data_dir, "test.target.json")):
-            self.all_answers['test'] = json.load(open(os.path.join(self.hparams.data_dir, "test.target.json")))
+            self.all_answers['test'] = json.load(
+                open(os.path.join(self.hparams.data_dir, "test.target.json"))
+            )
         self.simple_tokenizer = SimpleTokenizer()
 
         if self.hparams.freeze_embeds:
@@ -129,10 +138,16 @@ class SummarizationTrainer(BaseTransformer):
 
         y_ids = y[:, :-1].contiguous()
         lm_labels = y[:, 1:].clone()  
+
         # next tokens (different from newest HF implementation)
         lm_labels[y[:, 1:] == pad_token_id] = -100
 
-        # outputs = self(source_ids, attention_mask=source_mask, decoder_input_ids=y_ids, lm_labels=lm_labels, )
+        # outputs = self(
+        #   source_ids, 
+        #   attention_mask=source_mask, 
+        #   decoder_input_ids=y_ids, 
+        #   lm_labels=lm_labels,
+        # )
         # loss = outputs[0]
         # add use_cache=False when HF==3
         
@@ -213,7 +228,12 @@ class SummarizationTrainer(BaseTransformer):
     def calc_acc(self, pred_answers, all_answers):
         n_acc = 0
         for pred, answers in zip(pred_answers, all_answers):
-            if has_answer(answers=answers, text=pred, tokenizer=self.simple_tokenizer, match_type='string'):
+            if has_answer(
+                answers=answers, 
+                text=pred, 
+                tokenizer=self.simple_tokenizer, 
+                match_type="string",
+                ):
                 n_acc += 1
         acc = n_acc / len(pred_answers) * 100
         return acc
@@ -244,8 +264,10 @@ class SummarizationTrainer(BaseTransformer):
         for output_batch in outputs:
             pred_l.extend(output_batch['preds'])
             tgt_l.extend(output_batch['target'])
+        
         EM = -1
         acc = -1
+        
         if mode in self.all_answers:
             if self.hparams.max_target_length > 50:  # generate context
                 acc = self.calc_acc(pred_l, self.all_answers[mode])
@@ -256,9 +278,11 @@ class SummarizationTrainer(BaseTransformer):
         # reference_lns = [x.rstrip() for x in open(targets_file).readlines()]
         # result = calculate_rouge(output_lns, reference_lns)
         result = calculate_rouge(pred_l, tgt_l)
-        return_dict = {f'{mode}-ROUGE-1': torch.tensor(result["rouge1"].mid.fmeasure),
-                       f'{mode}-ROUGE-2': torch.tensor(result["rouge2"].mid.fmeasure),
-                       f'{mode}-ROUGE-L': torch.tensor(result["rougeL"].mid.fmeasure), }
+        return_dict = {
+            f'{mode}-ROUGE-1': torch.tensor(result["rouge1"].mid.fmeasure),
+            f'{mode}-ROUGE-2': torch.tensor(result["rouge2"].mid.fmeasure),
+            f'{mode}-ROUGE-L': torch.tensor(result["rougeL"].mid.fmeasure), 
+        }
         if EM != -1:
             return_dict[f'{mode}-EM'] = torch.tensor(EM)
         if acc != -1:
@@ -274,22 +298,43 @@ class SummarizationTrainer(BaseTransformer):
         res = {'epoch': self.current_epoch, "test_loss": avg_loss, **rouge_res}
         return {'log': res}
 
-    def get_dataloader(self, type_path: str, batch_size: int, shuffle: bool = False,
-                       num_workers: int = 0) -> DataLoader:
-        dataset = SummarizationDataset(self.tokenizer, type_path=type_path, **self.dataset_kwargs)
-        dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=dataset.collate_fn, shuffle=shuffle,
-                                num_workers=num_workers)
+    def get_dataloader(
+        self, 
+        type_path: str, 
+        batch_size: int, 
+        shuffle: bool = False,
+        num_workers: int = 0,
+        ) -> DataLoader:
+        dataset = SummarizationDataset(
+            self.tokenizer, 
+            type_path=type_path, 
+            **self.dataset_kwargs,
+        )
+        dataloader = DataLoader(
+            dataset, 
+            batch_size=batch_size, 
+            collate_fn=dataset.collate_fn, 
+            shuffle=shuffle,
+            num_workers=num_workers,
+        )
         return dataloader
 
     def train_dataloader(self) -> DataLoader:
-        dataloader = self.get_dataloader("train", batch_size=self.hparams.train_batch_size, shuffle=True, num_workers=4)
+        dataloader = self.get_dataloader(
+            "train", 
+            batch_size=self.hparams.train_batch_size, 
+            shuffle=True, 
+            num_workers=4,
+        )
         t_total = (
                 (len(dataloader.dataset) // (self.hparams.train_batch_size * max(1, self.hparams.n_gpu)))
                 // self.hparams.gradient_accumulation_steps
                 * float(self.hparams.num_train_epochs)
         )
         scheduler = get_linear_schedule_with_warmup(
-            self.opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=t_total
+            self.opt, 
+            num_warmup_steps=self.hparams.warmup_steps, 
+            num_training_steps=t_total,
         )
         self.lr_scheduler = scheduler
         return dataloader
