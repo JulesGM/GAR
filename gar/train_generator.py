@@ -9,8 +9,9 @@ import random
 import re
 import sys
 
-sys.path.insert(0, "../")
-sys.path.insert(0, "../dpr")
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+sys.path.insert(0, str(SCRIPT_DIR.parent/"dpr"))
 
 import rich
 from rouge_score import rouge_scorer, scoring
