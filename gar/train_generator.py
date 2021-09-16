@@ -13,6 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
 sys.path.insert(0, str(SCRIPT_DIR.parent/"dpr"))
 
+import colored_traceback.auto
 import rich
 from rouge_score import rouge_scorer, scoring
 import torch
@@ -467,5 +468,6 @@ if __name__ == "__main__":
 
     args.n_gpu = args.gpus = torch.cuda.device_count()
     args.n_nodes = int(os.getenv("SLURM_NNODES", 1))
+    args.backend = "horovod"
 
     main(args)

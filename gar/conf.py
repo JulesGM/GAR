@@ -113,6 +113,11 @@ def add_generic_args(parser, root_dir):
              "See details at https://nvidia.github.io/apex/amp.html",
     )
 
+    parser.add_argument(
+        "--backend", 
+        choices=["horovod", "nccl", "gloo"], 
+        required=True,
+    )
     parser.add_argument("--n_tpu_cores", type=int, default=0)
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")

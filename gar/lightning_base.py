@@ -260,6 +260,7 @@ def generic_train(
     odir.mkdir(exist_ok=True)
 
     if args.save_top_k > 0:
+        assert args.ckpt_metric
         checkpoint_callback = pl.callbacks.ModelCheckpoint(
             dirpath=args.output_dir, 
             monitor=args.ckpt_metric, 
@@ -273,12 +274,14 @@ def generic_train(
 
     train_params = {}
     if args.gpus > 1 or args.n_nodes > 1:
-        train_params["accelerator"] = "ddp"
+        if args.backend != "horovod":
+            train_params["accelerator"] = args.backend
+        else:
+            train_params["accelerator"] = "ddp"
 
     # lr_logger = LearningRateLogger()
     train_params = dict(
         accumulate_grad_batches=args.gradient_accumulation_steps,
-        gpus=args.gpus,
         max_epochs=args.num_train_epochs,
         gradient_clip_val=args.max_grad_norm,
         callbacks=[LoggingCallback(), checkpoint_callback],
@@ -288,10 +291,15 @@ def generic_train(
         val_check_interval=args.val_check_interval,
         # overfit_batches=2,
         limit_val_batches=args.limit_val_batches,
-        num_nodes=args.n_nodes,
         **train_params,
         # fast_dev_run=True,
     )
+
+    if args.backend != "horovod":
+        train_params["gpus"] = args.gpus
+        train_params["num_nodes"] = args.n_nodes
+    else:
+        train_params["gpus"] = 1
 
     if args.fp16:
         assert False
@@ -307,6 +315,24 @@ def generic_train(
         train_params["gpus"] = 0
 
     trainer = pl.Trainer(**train_params)
+    
+    # # https://github.com/PyTorchLightning/pytorch-lightning/blob/1.4.7/pytorch_lightning/plugins/environments/slurm_environment.py#L24
+    # env = trainer._cluster_environment
+    # env_info_keys = {
+    #     "master_adress",
+    #     "master_port",
+    #     "world_size",
+    #     "global_rank",
+    #     "local_rank",
+    #     "node_rank",
+    #     # "resolve_root_node_address",
+    # }
+    # env_info = dict()
+    # for key in env_info_keys:
+    #     env_info[key] = getattr(env, key)()
+
+    # print(f"env_info: {env_info}")
+    # logger.info(f"env_info: {env_info}")
 
     if args.do_train:
         trainer.fit(model)
