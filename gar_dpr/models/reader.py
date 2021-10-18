@@ -22,7 +22,7 @@ from torch.nn import CrossEntropyLoss
 from dpr.data.reader_data import ReaderSample, ReaderPassage
 from dpr.utils.model_utils import init_weights
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 ReaderBatch = collections.namedtuple('ReaderBatch', ['input_ids', 'start_positions', 'end_positions', 'answers_mask'])
 

@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+from pathlib import Path
 import pickle
 import random
 import subprocess
@@ -14,8 +16,35 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-
 # from transformers.tokenization_utils import trim_batch
+
+def pickle_load(path):
+    with open(path, "rb") as fin:
+        return pickle.load(fin)
+
+
+def pickle_dump(obj, path):
+    with open(path, "wb") as fout:
+        pickle.dump(obj, fout)
+
+
+def json_load(path, **kwargs):
+    with open(path) as fin:
+        return json.load(fin, **kwargs)
+
+
+def json_dump(obj, path, **kwargs):
+    with open(path, "w") as fout:
+        return json.dump(obj, fout, **kwargs)
+
+
+def get_local_rank():
+    return os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
+
+
+def get_global_rank():
+    return os.environ["OMPI_COMM_WORLD_NODE_RANK"]
+
 
 def trim_batch(
         input_ids,
@@ -23,6 +52,7 @@ def trim_batch(
         attention_mask=None,
 ):
     """Remove columns that are populated exclusively by pad_token_id"""
+
     keep_column_mask = input_ids.ne(pad_token_id).any(dim=0)
     if attention_mask is None:
         return input_ids[:, keep_column_mask]
@@ -66,74 +96,11 @@ def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=-100):
     return loss, nll_loss
 
 
-def read_retrieval_N(fname, data, pad_k=0):
-    # use this func to avoid zero retreived mismatch
-
-    retrieved_docs = [[] for _ in range(len(data))]
-    with open(fname, encoding='utf8') as f:
-        for line in tqdm(f):
-            data = line.strip().split('\t')
-            cur = int(data[0])
-            retrieved_docs[cur].append(data[1])
-    if pad_k > 0:
-        ct = 0
-        for i in range(len(retrieved_docs)):
-            if len(retrieved_docs[i]) < pad_k:
-                retrieved_docs[i].extend(['1'] * (pad_k - len(retrieved_docs[i])))
-                ct += 1
-        if ct > 0:
-            print(f'insert random passage for {ct} samples. otherwise reader may crash')
-    return retrieved_docs
-
-
-def get_gpu_memory_map():
-    result = subprocess.check_output(
-        [
-            'nvidia-smi', '--query-gpu=memory.free,utilization.gpu',
-            '--format=csv,nounits,noheader'
-        ], encoding='utf-8')
-    gpu_info = [eval(x) for x in result.strip().split('\n')]
-    gpu_info = dict(zip(range(len(gpu_info)), gpu_info))
-    sorted_gpu_info = sorted(gpu_info.items(), key=lambda kv: kv[1][0], reverse=True)
-    sorted_gpu_info = sorted(sorted_gpu_info, key=lambda kv: kv[1][1])
-    return sorted_gpu_info
-
-
-def choose_gpu(n_gpus=1, min_gpu_memory=9000, retry=False, sleep_time=30):
-    start_time = time.time()
-    sorted_gpu_info = get_gpu_memory_map()
-    print(f'gpu_id, (mem_left, util): {sorted_gpu_info}')
-    while True:
-        gpus = []
-        for gpu_id, (mem_left, util) in sorted_gpu_info:
-            if mem_left >= min_gpu_memory:
-                gpus.append(gpu_id)
-                print('use gpu:{} with {} MB left, util {}%'.format(gpu_id, mem_left, util))
-            if len(gpus) == n_gpus:
-                print('max num of gpus reached.')
-                break
-        if len(gpus) == 0:
-            if retry:
-                print(f'[{datetime.now().strftime("%H:%M:%S")}'
-                      f' waited {time.strftime("%H:%M:%S", time.gmtime(time.time() - start_time))}]'
-                      f' no gpu has memory >= {min_gpu_memory} MB, sleep {sleep_time}s...', end='\r')
-                time.sleep(sleep_time)
-            else:
-                print(f'no gpu has memory >= {min_gpu_memory} MB, exiting...')
-                exit()
-        else:
-            break
-        sorted_gpu_info = get_gpu_memory_map()
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    visible_gpus = ','.join([str(gpu_id) for gpu_id in gpus])
-    os.environ["CUDA_VISIBLE_DEVICES"] = visible_gpus
-
-
 def encode_file(
-    tokenizer, 
-    data_path, 
-    max_length, 
-    pad_to_max_length=True, 
+    tokenizer,
+    data_path,
+    max_length,
+    pad_to_max_length=True,
     return_tensors="pt",
 ):
     examples = []
@@ -173,8 +140,10 @@ class SummarizationDataset(Dataset):
             max_target_length,
     ):
         super().__init__()
+        data_dir = Path(data_dir)
 
         rich.print(f"[red bold]{data_dir = }")
+        assert "bart" in str(tokenizer)
         self.tokenizer = tokenizer
         self.type_path = type_path
         if 'bart' in str(tokenizer):
@@ -184,40 +153,32 @@ class SummarizationDataset(Dataset):
         else:
             raise NotImplementedError
 
-        self.concat_source = True  # NB. if not concat_src, can dynamic shuffle from top-100
-        self.generate_relevance = False  # NB. if True, target is YES/NO instead of answers
 
-        if self.concat_source:
-            if os.path.exists(os.path.join(data_dir, type_path + f".source.processed{suffix}")):
-                print(f'loading from {type_path}.processed{suffix} (pkl)... make sure data is what you need')
-                self.source = pickle.load(open(os.path.join(data_dir, type_path + f".source.processed{suffix}"), 'rb'))
-                self.target = pickle.load(open(os.path.join(data_dir, type_path + f".target.processed{suffix}"), 'rb'))
-            else:
-                # self.source = encode_file(tokenizer, os.path.join(data_dir, type_path + ".source.rerank_ext_vote_top5"), max_source_length)
-                self.source = encode_file(tokenizer, os.path.join(data_dir, type_path + ".source"), max_source_length)
-                self.target = encode_file(tokenizer, os.path.join(data_dir, type_path + ".target"), max_target_length)
-                pickle.dump(self.source, open(os.path.join(data_dir, type_path + f".source.processed{suffix}"), 'wb'))
-                pickle.dump(self.target, open(os.path.join(data_dir, type_path + f".target.processed{suffix}"), 'wb'))
+        pickled_source_path = data_dir / f"{type_path}.source.processed{suffix}"
+        pickled_target_path = data_dir / f"{type_path}.target.processed{suffix}"
+        text_source_path = data_dir / f"{type_path}.source"
+        text_target_path = data_dir / f"{type_path}.target"
+
+        if pickled_source_path.exists() and pickled_target_path.exists():
+
+            print(
+                f"loading from {pickled_target_path} (pkl)... "
+                f"make sure data is what you need"
+            )
+            self.source = pickle_load(pickled_source_path)
+            self.target = pickle_load(pickled_target_path)
         else:
-            assert False
-            if os.path.exists(os.path.join('/workspace', type_path + ".source_ids.json")):
-                print(f'loading {type_path}.source_ids.json from local to speed up!')
-                self.source = json.load(open(os.path.join('/workspace', type_path + ".source_ids.json")))
-            else:
-                self.source = json.load(open(os.path.join(data_dir, type_path + ".source_ids.json")))
-
-            target_file = os.path.join(data_dir, type_path + ".target")
-            print(f"### {target_file}")
-            self.target = encode_file(tokenizer, target_file, max_target_length)
-
-        if self.generate_relevance:
-            assert False
-            self.target = json.load(open(os.path.join(data_dir, type_path + ".relevance_labels.json")))
+            self.source = encode_file(tokenizer, text_source_path, max_source_length)
+            self.target = encode_file(tokenizer, text_target_path, max_target_length)
+            pickle_dump(self.source, pickled_source_path)
+            pickle_dump(self.target, pickled_target_path)
 
         self.all_answers = None
-        if os.path.exists(os.path.join(data_dir, f"{type_path}.target.json")):
-            self.all_answers = json.load(open(os.path.join(data_dir, f"{type_path}.target.json")))
+        target_json = data_dir / f"{type_path}.target.json"
+        if target_json.exists():
+            self.all_answers = json_load(target_json)
             self.kw_labels_cache = {}
+
 
     def __len__(self):
         return len(self.source)
@@ -225,7 +186,11 @@ class SummarizationDataset(Dataset):
     def create_kw_labels(self, answers, target_ids):
         kw_labels = torch.zeros(target_ids.shape).type_as(target_ids)
         for a in answers:
-            a_tokens = self.tokenizer.encode(a, add_special_tokens=False, return_tensors='pt')[0]
+            a_tokens = self.tokenizer.encode(
+                a, 
+                add_special_tokens=False, 
+                return_tensors="pt",
+            )[0]
             a_len = a_tokens.shape[0]
             target_len = target_ids.shape[0]
             for idx in range(target_len - a_len):
@@ -240,72 +205,47 @@ class SummarizationDataset(Dataset):
                 top_k = random.randrange(0, 11)
             else:
                 top_k = 10
-            selected_psg = list(range(top_k)) + random.choices(list(range(top_k, len(ctx_ids_l))), k=10 - top_k)
+            selected_psg = (
+                list(range(top_k)) + 
+                random.choices(list(range(top_k, len(ctx_ids_l))), k=10 - top_k)
+            )
         else:
             selected_psg = range(10)
-        source_ids = [self.tokenizer.bos_token_id] + q_ids + [self.tokenizer.eos_token_id]
+        source_ids = (
+            [self.tokenizer.bos_token_id] + q_ids + [self.tokenizer.eos_token_id]
+        )
         for idx in selected_psg:
             title_ids, text_ids = ctx_ids_l[idx]
-            source_ids.extend(title_ids + [self.tokenizer.eos_token_id] + text_ids + [self.tokenizer.eos_token_id])
+            source_ids.extend(
+                title_ids + [self.tokenizer.eos_token_id] 
+                + text_ids + [self.tokenizer.eos_token_id]
+            )
         source_ids = torch.LongTensor(source_ids[:1024])
         return source_ids
 
-    def prepare_relevance_label(self, index, add_A=False):
-        MAX_SRC_LENGTH = 256  # TODO change?
-        q_ids, ctx_ids_l = self.source[index]
-        source_ids = [self.tokenizer.bos_token_id] + q_ids + [self.tokenizer.eos_token_id]
-        if add_A:
-            As = self.all_answers[index]
-            A_idx = random.randrange(0, len(As))
-            a_tokens = self.tokenizer.encode(As[A_idx], add_special_tokens=False)
-            source_ids.extend(a_tokens + [self.tokenizer.eos_token_id])
-
-        ctx_idx = random.randrange(0, len(ctx_ids_l))
-        title_ids, text_ids = ctx_ids_l[ctx_idx]
-        source_ids.extend(title_ids + [self.tokenizer.eos_token_id] + text_ids + [self.tokenizer.eos_token_id])
-        src_len = min(MAX_SRC_LENGTH, len(source_ids))
-        pad_len = MAX_SRC_LENGTH - src_len
-        source_ids = torch.LongTensor(source_ids[:MAX_SRC_LENGTH] + [self.tokenizer.pad_token_id] * pad_len)
-        src_mask = torch.LongTensor([1] * src_len + [0] * pad_len)
-        relevance_label = self.target[index][ctx_idx]
-        if relevance_label:
-            target_ids = self.tokenizer.encode('YES', return_tensors='pt')[0]
-        else:
-            target_ids = self.tokenizer.encode('NO', return_tensors='pt')[0]
-        return source_ids, src_mask, target_ids
-
     def __getitem__(self, index):
-        if self.concat_source:
-            source_ids = self.source[index]["input_ids"].squeeze()
-            target_ids = self.target[index]["input_ids"].squeeze()
-            src_mask = self.source[index]["attention_mask"].squeeze()
-            self.shuffle = False  # NB. whether shuffle input psg or not
-            if self.shuffle and self.type_path == 'train':
-                # no change to attention_mask since they are all 1s for top-10 psg
-                idx_l = []
-                last_idx = -1
-                for ct, i in enumerate(torch.where(source_ids == 2)[0]):
-                    # since title is split by 2 too
-                    if ct % 2 == 0:
-                        idx_l.append((last_idx + 1, i.item()))
-                        last_idx = i.item()
-                if last_idx != 1023:
-                    idx_l.append((last_idx + 1, 1023))
-                psg_idx_l = idx_l[1:]
-                random.shuffle(psg_idx_l)
-                idx_l = idx_l[:1] + psg_idx_l
-                new_source_ids = []
-                for start, end in idx_l:
-                    new_source_ids.append(source_ids[start: end + 1])
-                source_ids = torch.cat(new_source_ids)
-        else:
-            assert False
-            if self.generate_relevance:
-                source_ids, src_mask, target_ids = self.prepare_relevance_label(index, add_A=True)
-            else:
-                target_ids = self.target[index]["input_ids"].squeeze()
-                source_ids = self.select_psg(self.source[index]).type_as(target_ids)
-                src_mask = torch.ones(1024).type_as(target_ids)
+        source_ids = self.source[index]["input_ids"].squeeze()
+        target_ids = self.target[index]["input_ids"].squeeze()
+        src_mask = self.source[index]["attention_mask"].squeeze()
+        self.shuffle = False  # NB. whether shuffle input psg or not
+        if self.shuffle and self.type_path == 'train':
+            # no change to attention_mask since they are all 1s for top-10 psg
+            idx_l = []
+            last_idx = -1
+            for ct, i in enumerate(torch.where(source_ids == 2)[0]):
+                # since title is split by 2 too
+                if ct % 2 == 0:
+                    idx_l.append((last_idx + 1, i.item()))
+                    last_idx = i.item()
+            if last_idx != 1023:
+                idx_l.append((last_idx + 1, 1023))
+            psg_idx_l = idx_l[1:]
+            random.shuffle(psg_idx_l)
+            idx_l = idx_l[:1] + psg_idx_l
+            new_source_ids = []
+            for start, end in idx_l:
+                new_source_ids.append(source_ids[start: end + 1])
+            source_ids = torch.cat(new_source_ids)
 
         # whether add kw_labels (mark answer spans) when generating psg [not used]
         kw_labels = None
@@ -316,14 +256,18 @@ class SummarizationDataset(Dataset):
         #     kw_labels = self.kw_labels_cache[index]
 
         return {
-            "source_ids": source_ids, 
-            "source_mask": src_mask, 
-            "target_ids": target_ids, 'kw_labels': kw_labels}
+            "source_ids": source_ids,
+            "source_mask": src_mask,
+            "target_ids": target_ids,
+            "kw_labels": kw_labels
+        }
 
     @staticmethod
     def trim_seq2seq_batch(batch, pad_token_id):
         y = trim_batch(batch["target_ids"], pad_token_id)
-        source_ids, source_mask = trim_batch(batch["source_ids"], pad_token_id, attention_mask=batch["source_mask"])
+        source_ids, source_mask = trim_batch(
+            batch["source_ids"], pad_token_id, attention_mask=batch["source_mask"]
+        )
         return source_ids, source_mask, y
 
     def collate_fn(self, batch):

@@ -29,9 +29,10 @@ def setup_task():
     # default target if not set
     if dataset is None:
         print('dataset is not set, setting to [nq] by default!')
-        mode = 'nq'
+        dataset = 'nq'
     else:
         print(f'dataset=[{dataset}]')
+        
     if mode is None:
         print('mode is not set, setting to [answer] by default!')
         mode = 'answer'
@@ -119,7 +120,9 @@ def add_generic_args(parser, root_dir):
         required=True,
     )
     parser.add_argument("--n_tpu_cores", type=int, default=0)
-    parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
+    parser.add_argument(
+        "--local_rank", 
+        type=int, default=-1, help="local_rank for distributed training on gpus")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument("--do_train", default=True, action="store_true", help="Whether to run training.")
     parser.add_argument("--do_predict", default=True, action="store_true",
@@ -133,7 +136,7 @@ def add_generic_args(parser, root_dir):
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
     parser.add_argument("--ckpt_metric", type=str, default='val-acc')
     parser.add_argument("--ckpt_mode", type=str, default='max')
-    parser.add_argument("--save_top_k", type=int, default=1)
+    parser.add_argument("--save_top_k", type=int, default=-1)
 
     # parser.add_argument("--gpus", type=int, default=1)
     # parser.add_argument("--n_gpu", type=int, default=1)

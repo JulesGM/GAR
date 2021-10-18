@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import random
@@ -8,6 +9,7 @@ import colored_traceback.auto
 import numpy as np
 import pytorch_lightning as pl
 # from pytorch_lightning.callbacks import LearningRateLogger
+import rich
 import torch
 
 from transformers import (
@@ -22,6 +24,8 @@ from transformers import (
     AutoTokenizer,
     get_linear_schedule_with_warmup,
 )
+
+import utils_gen
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,7 @@ class BaseTransformer(pl.LightningModule):
             **config_kwargs,
         )
 
+        # Jules: WTF is this
         extra_model_params = (
             "encoder_layerdrop", 
             "decoder_layerdrop", 
@@ -230,12 +235,13 @@ class LoggingCallback(pl.Callback):
         trainer: pl.Trainer, 
         pl_module: pl.LightningModule,
     ):
+        assert False
         logger.info("***** Test results *****")
         metrics = trainer.callback_metrics
         # Log and save results to file
         output_test_results_file = os.path.join(
             pl_module.hparams.output_dir, 
-            "test_results.txt",
+            "test_results_node_rank_{trainer.node_rank}_local_rank_{trainer.local_rank}.txt",
         )
         with open(output_test_results_file, "w") as writer:
             for key in sorted(metrics):
@@ -246,7 +252,6 @@ class LoggingCallback(pl.Callback):
                     writer.write("{} = {}\n".format(
                         key, str(metrics[key]))
                     )
-
 
 def generic_train(
     model: BaseTransformer, 
@@ -259,25 +264,44 @@ def generic_train(
     odir = Path(model.hparams.output_dir)
     odir.mkdir(exist_ok=True)
 
-    if args.save_top_k > 0:
-        assert args.ckpt_metric
-        checkpoint_callback = pl.callbacks.ModelCheckpoint(
-            dirpath=args.output_dir, 
-            monitor=args.ckpt_metric, 
-            mode=args.ckpt_mode,
-            save_top_k=args.save_top_k, 
-            save_last=True,
-        )
-    else:
-        checkpoint_callback = None
-        print('[warning] will not save ckpt!')
+    assert isinstance(args.save_top_k, int), type(args.save_top_k)
+    assert args.save_top_k != 0, args.save_top_k
+    assert args.ckpt_metric, args.ckpt_metric
+    assert args.ckpt_mode, args.ckpt_mode
+    assert args.output_dir, args.output_dir
+    assert Path(args.output_dir).exists, args.output_dir
+    
+    if (
+        "rouge" in args.ckpt_metric.lower() 
+        or "bleu" in args.ckpt_metric.lower()
+    ):
+        assert args.ckpt_mode == "max", args.ckpt_mode
+
+    if (
+        "ppl" in args.ckpt_metric.lower() or
+        "loss" in args.ckpt_metric.lower()
+    ):
+        assert args.ckpt_mode == "min", args.ckpt_mode
+
+    checkpoint_params = dict(
+        dirpath=args.output_dir, 
+        monitor=args.ckpt_metric, 
+        mode=args.ckpt_mode,
+        save_top_k=args.save_top_k, 
+        save_last=True,
+        auto_insert_metric_name=True,
+        every_n_epochs=3,
+    )
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        **checkpoint_params
+    )
 
     train_params = {}
     if args.gpus > 1 or args.n_nodes > 1:
         if args.backend != "horovod":
-            train_params["accelerator"] = args.backend
-        else:
             train_params["accelerator"] = "ddp"
+        else:
+            train_params["accelerator"] = "horovod"
 
     # lr_logger = LearningRateLogger()
     train_params = dict(
@@ -289,20 +313,21 @@ def generic_train(
         logger=logger,
         check_val_every_n_epoch=args.check_val_every_n_epoch,
         val_check_interval=args.val_check_interval,
-        # overfit_batches=2,
         limit_val_batches=args.limit_val_batches,
         **train_params,
+
+        # overfit_batches=2,
         # fast_dev_run=True,
     )
 
     if args.backend != "horovod":
         train_params["gpus"] = args.gpus
         train_params["num_nodes"] = args.n_nodes
+
     else:
         train_params["gpus"] = 1
 
     if args.fp16:
-        assert False
         train_params["precision"] = 16
         train_params["amp_level"] = args.fp16_opt_level
 
@@ -314,25 +339,31 @@ def generic_train(
         train_params["num_tpu_cores"] = args.n_tpu_cores
         train_params["gpus"] = 0
 
+    rich.print(f"[green bold]Num GPUs: {train_params['gpus']}")
+    rich.print(f"[green bold]Accelerator: {train_params['accelerator']}")
+
     trainer = pl.Trainer(**train_params)
     
-    # # https://github.com/PyTorchLightning/pytorch-lightning/blob/1.4.7/pytorch_lightning/plugins/environments/slurm_environment.py#L24
-    # env = trainer._cluster_environment
-    # env_info_keys = {
-    #     "master_adress",
-    #     "master_port",
-    #     "world_size",
-    #     "global_rank",
-    #     "local_rank",
-    #     "node_rank",
-    #     # "resolve_root_node_address",
-    # }
-    # env_info = dict()
-    # for key in env_info_keys:
-    #     env_info[key] = getattr(env, key)()
+    if trainer.is_global_zero:
+        rich.print("[bold]train_params:", train_params)
+        rich.print("[bold]checkpoint_params:", checkpoint_params)
+        
+        utils_gen.json_dump(
+            args, 
+            Path(args.output_dir)/"real_args.json",
+            default=str,
+        )
 
-    # print(f"env_info: {env_info}")
-    # logger.info(f"env_info: {env_info}")
+        utils_gen.json_dump(
+            train_params, 
+            Path(args.output_dir)/"train_params.json",
+            default=str,
+        )
+        utils_gen.json_dump(
+            checkpoint_params, 
+            Path(args.output_dir)/"checkpoint_params.json",
+            default=str,
+        )
 
     if args.do_train:
         trainer.fit(model)

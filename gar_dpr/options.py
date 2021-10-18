@@ -18,7 +18,7 @@ import socket
 import numpy as np
 import torch
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def add_tokenizer_params(parser: argparse.ArgumentParser):

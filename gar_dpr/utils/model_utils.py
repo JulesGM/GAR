@@ -16,7 +16,7 @@ from torch import nn
 from torch.optim.lr_scheduler import LambdaLR
 from torch.serialization import default_restore_location
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 CheckpointState = collections.namedtuple("CheckpointState",
                                          ['model_dict', 'optimizer_dict', 'scheduler_dict', 'offset', 'epoch',

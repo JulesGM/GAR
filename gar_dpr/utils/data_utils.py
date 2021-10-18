@@ -18,7 +18,7 @@ from typing import List, Iterator, Callable
 
 from torch import Tensor as T
 
-logger = logging.getLogger()
+logger = logging.getLogger(___name__)
 
 
 def read_serialized_data_from_files(paths: List[str]) -> List:

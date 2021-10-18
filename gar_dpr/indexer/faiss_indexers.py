@@ -16,7 +16,7 @@ from typing import List, Tuple
 import faiss
 import numpy as np
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class DenseIndexer(object):

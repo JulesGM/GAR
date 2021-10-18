@@ -36,7 +36,7 @@ from dpr.utils.data_utils import ShardedDataIterator, read_serialized_data_from_
 from dpr.utils.model_utils import get_schedule_linear, load_states_from_checkpoint, move_to_device, CheckpointState, \
     get_model_file, setup_for_distributed_mode, get_model_obj, precheck_model_file
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if (logger.hasHandlers()):
     logger.handlers.clear()

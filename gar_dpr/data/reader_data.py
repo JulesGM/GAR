@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from dpr.utils.data_utils import Tensorizer
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class ReaderPassage(object):
