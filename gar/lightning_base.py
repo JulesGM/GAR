@@ -59,24 +59,23 @@ class BaseTransformer(pl.LightningModule):
 
         super().__init__()
 
-        for k, v in vars(hparams).items():     
+        for k, v in vars(hparams).items():
             setattr(self.hparams, k, v)
 
         cache_dir = self.hparams.cache_dir if self.hparams.cache_dir else None
         self.config = AutoConfig.from_pretrained(
-            self.hparams.config_name 
-            if self.hparams.config_name 
+            self.hparams.config_name
+            if self.hparams.config_name
             else self.hparams.model_name_or_path,
             **({"num_labels": num_labels} if num_labels is not None else {}),
             cache_dir=cache_dir,
             **config_kwargs,
         )
 
-        # Jules: WTF is this
         extra_model_params = (
-            "encoder_layerdrop", 
-            "decoder_layerdrop", 
-            "dropout", 
+            "encoder_layerdrop",
+            "decoder_layerdrop",
+            "dropout",
             "attention_dropout",
         )
         for p in extra_model_params:
@@ -87,11 +86,12 @@ class BaseTransformer(pl.LightningModule):
                 setattr(self.config, p, getattr(self.hparams, p))
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.hparams.tokenizer_name 
-            if self.hparams.tokenizer_name 
+            self.hparams.tokenizer_name
+            if self.hparams.tokenizer_name
             else self.hparams.model_name_or_path,
             cache_dir=cache_dir,
         )
+        
         # if 'gpt2' in self.hparams.model_name_or_path:
         #     self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = MODEL_MODES[mode].from_pretrained(
@@ -266,31 +266,36 @@ def generic_train(
 
     assert isinstance(args.save_top_k, int), type(args.save_top_k)
     assert args.save_top_k != 0, args.save_top_k
-    assert args.ckpt_metric, args.ckpt_metric
-    assert args.ckpt_mode, args.ckpt_mode
+    # assert args.ckpt_metric, args.ckpt_metric
+    # assert args.ckpt_mode, args.ckpt_mode
     assert args.output_dir, args.output_dir
     assert Path(args.output_dir).exists, args.output_dir
     
-    if (
-        "rouge" in args.ckpt_metric.lower() 
-        or "bleu" in args.ckpt_metric.lower()
-    ):
-        assert args.ckpt_mode == "max", args.ckpt_mode
+    # if (
+    #     "rouge" in args.ckpt_metric.lower() 
+    #     or "bleu" in args.ckpt_metric.lower()
+    # ):
+    #     assert args.ckpt_mode == "max", args.ckpt_mode
 
-    if (
-        "ppl" in args.ckpt_metric.lower() or
-        "loss" in args.ckpt_metric.lower()
-    ):
-        assert args.ckpt_mode == "min", args.ckpt_mode
+    # if (
+    #     "ppl" in args.ckpt_metric.lower() or
+    #     "loss" in args.ckpt_metric.lower()
+    # ):
+    #     assert args.ckpt_mode == "min", args.ckpt_mode
+
+    # assert not args.ckpt_metric, args.ckpt_metric
+    # assert not args.ckpt_mode, args.ckpt_mode
+    assert args.save_top_k == -1, args.save_top_k
 
     checkpoint_params = dict(
         dirpath=args.output_dir, 
-        monitor=args.ckpt_metric, 
-        mode=args.ckpt_mode,
+        # monitor=args.ckpt_metric, 
+        # mode=args.ckpt_mode,
+        # auto_insert_metric_name=True,
         save_top_k=args.save_top_k, 
         save_last=True,
-        auto_insert_metric_name=True,
         every_n_epochs=3,
+        save_on_train_epoch_end=True, 
     )
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         **checkpoint_params
@@ -349,20 +354,21 @@ def generic_train(
         rich.print("[bold]checkpoint_params:", checkpoint_params)
         
         utils_gen.json_dump(
-            args, 
-            Path(args.output_dir)/"real_args.json",
-            default=str,
+            vars(args), 
+            Path(args.output_dir) / "real_args.json",
+            default=utils_gen.json_default,
         )
 
         utils_gen.json_dump(
             train_params, 
-            Path(args.output_dir)/"train_params.json",
-            default=str,
+            Path(args.output_dir) / "train_params.json",
+            default=utils_gen.json_default,
         )
+
         utils_gen.json_dump(
             checkpoint_params, 
-            Path(args.output_dir)/"checkpoint_params.json",
-            default=str,
+            Path(args.output_dir) / "checkpoint_params.json",
+            default=utils_gen.json_default,
         )
 
     if args.do_train:

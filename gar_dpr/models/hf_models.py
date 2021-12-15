@@ -15,12 +15,9 @@ from typing import Tuple
 import torch
 from torch import Tensor as T
 from torch import nn
-from transformers.modeling_bert import BertConfig, BertModel
-from transformers.optimization import AdamW
-from transformers.tokenization_bert import BertTokenizer
-from transformers.tokenization_roberta import RobertaTokenizer
+import transformers
 
-from dpr.utils.data_utils import Tensorizer
+from gar_dpr.utils.data_utils import Tensorizer
 from .biencoder import BiEncoder
 from .reader import Reader
 
@@ -85,12 +82,12 @@ def get_optimizer(model: nn.Module, learning_rate: float = 1e-5, adam_eps: float
          'weight_decay': weight_decay},
         {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_eps)
+    optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_eps)
     return optimizer
 
 
 def get_bert_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
-    return BertTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+    return transformers.BertTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
 
 
 def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
@@ -98,17 +95,17 @@ def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
     return RobertaTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
 
 
-class HFBertEncoder(BertModel):
+class HFBertEncoder(transformers.BertModel):
 
     def __init__(self, config, project_dim: int = 0):
-        BertModel.__init__(self, config)
+        transformers.BertModel.__init__(self, config)
         assert config.hidden_size > 0, 'Encoder hidden_size can\'t be zero'
         self.encode_proj = nn.Linear(config.hidden_size, project_dim) if project_dim != 0 else None
         self.init_weights()
 
     @classmethod
     def init_encoder(cls, cfg_name: str, projection_dim: int = 0, dropout: float = 0.1, **kwargs) -> BertModel:
-        cfg = BertConfig.from_pretrained(cfg_name if cfg_name else 'bert-base-uncased')
+        cfg = transformers.BertConfig.from_pretrained(cfg_name if cfg_name else 'bert-base-uncased')
         if dropout != 0:
             cfg.attention_probs_dropout_prob = dropout
             cfg.hidden_dropout_prob = dropout
@@ -136,7 +133,7 @@ class HFBertEncoder(BertModel):
 
 
 class BertTensorizer(Tensorizer):
-    def __init__(self, tokenizer: BertTokenizer, max_length: int, pad_to_max: bool = True):
+    def __init__(self, tokenizer: transformers.BertTokenizer, max_length: int, pad_to_max: bool = True):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.pad_to_max = pad_to_max

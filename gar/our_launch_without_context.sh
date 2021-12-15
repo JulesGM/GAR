@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-######################################################################
+##############################################################################
 # Boilerplate to get the directory of the script.
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do 
@@ -10,7 +10,7 @@ while [ -h "$SOURCE" ]; do
     [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" 
 done
 SCRIPT_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
-######################################################################
+##############################################################################
 
 if [[ -z $1 ]] ; then
 	echo "'\$1' Should be the output filename. Got nothing."

@@ -2,28 +2,21 @@ import argparse
 import glob
 import json
 import importlib
-import io
 import logging
 import os
 from pathlib import Path
-import random
 import re
 import sys
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
 
-import horovod.torch as hvd
 
 import json
-import jsonlines
-import rich
+
 from rouge_score import rouge_scorer, scoring
 import torch
 from torch.utils.data import DataLoader
-from pytorch_lightning.loggers import WandbLogger
-import transformers
-
 
 from gar_dpr.utils.tokenizers import SimpleTokenizer
 from gar_dpr.data.qa_validation import exact_match_score, has_answer
@@ -38,7 +31,9 @@ _parse_version_version_string_pat = re.compile(
     r"^([0-9]+\.[0-9]+\.[0-9]+)"
 )
 
+
 def allgather_object(obj, backend):
+    import horovod.torch as hvd
     assert backend == "horovod", backend
     return hvd.allgather_object(obj)
 
@@ -48,6 +43,7 @@ def _parse_version(version_string):
         version_string
     ).group(1)
     return tuple(map(int, version_string.split(".")))
+
 
 def check_version(module, lb=None, ub=None):
 
@@ -63,8 +59,6 @@ def check_version(module, lb=None, ub=None):
         assert lb <= version[:len(lb)], f"lb={lb}, version={version}"
     if ub: 
         assert version[:len(ub)] < ub, f"ub={ub}, version={version}"
-
-# check_version(transformers, (2, 11), (2, 12))
 
 
 def calculate_rouge(output_lns, reference_lns, score_path=None):
@@ -416,7 +410,6 @@ class SummarizationTrainer(lightning_base.BaseTransformer):
     
 def main(args):
     model = SummarizationTrainer(args)
-
     cp_file = None
     if args.do_train:
         if args.load_ckpt_name is not None:
@@ -442,12 +435,6 @@ def main(args):
                     )[0]
             if cp_file is not None:
                 print(f'resume training from {cp_file} ...')
-
-    logger = WandbLogger(
-        name=os.path.dirname(args.output_dir), 
-        project="IteratedRetrieval.train_generator",
-        entity="julesgm",
-    )
 
     logger = True
     trainer = lightning_base.generic_train(

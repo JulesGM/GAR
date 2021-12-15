@@ -9,14 +9,31 @@ import time
 from multiprocessing import get_context, Pool
 from time import sleep
 from datetime import datetime
+from typing import *
 
-
+import pytorch_lightning as pl
 import rich
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
+import transformers
 
 # from transformers.tokenization_utils import trim_batch
+
+
+def _handle_paths(obj: Any) -> str:
+    assert isinstance(obj, Path)
+    return str(obj)
+
+
+def json_default(obj: Any) -> Any:
+    if isinstance(obj, Path):
+        return _handle_paths(obj)
+    elif isinstance(obj, pl.Callback):
+        return str(obj)
+    else:
+        raise ValueError(type(obj).mro())
+
 
 def pickle_load(path):
     with open(path, "rb") as fin:
@@ -103,18 +120,32 @@ def encode_file(
     pad_to_max_length=True,
     return_tensors="pt",
 ):
+    assert pad_to_max_length == True, f"{pad_to_max_length = }"
+    assert return_tensors == "pt", f"{return_tensors = }"
+    assert max_length > 1, f"{max_length = }"
+    rich.print(f"Tokenizer: {tokenizer}")
+    
     examples = []
     rich.print(f"[red purple]{max_length = }")
+    import collections
+    counter = collections.Counter()
+
     with open(data_path, encoding='utf8') as f:
+        lens = []
         for text in tqdm(f.readlines()):
             tokenized = tokenizer.batch_encode_plus(
-                [text], 
-                max_length=max_length, 
+                [text],
+                max_length=max_length,
                 truncation=True,
-                pad_to_max_length=pad_to_max_length, 
+                padding="max_length" if pad_to_max_length else False,
                 return_tensors=return_tensors,
             )
+
             examples.append(tokenized)
+            lens.append(tokenized["input_ids"].shape[1])
+            
+    counter.update(lens)
+    rich.print(f"[bold purple]{counter = }")
     return examples
 
 
@@ -159,20 +190,21 @@ class SummarizationDataset(Dataset):
         text_source_path = data_dir / f"{type_path}.source"
         text_target_path = data_dir / f"{type_path}.target"
 
-        if pickled_source_path.exists() and pickled_target_path.exists():
-
-            print(
-                f"loading from {pickled_target_path} (pkl)... "
-                f"make sure data is what you need"
-            )
-            self.source = pickle_load(pickled_source_path)
-            self.target = pickle_load(pickled_target_path)
-        else:
-            self.source = encode_file(tokenizer, text_source_path, max_source_length)
-            self.target = encode_file(tokenizer, text_target_path, max_target_length)
-            pickle_dump(self.source, pickled_source_path)
-            pickle_dump(self.target, pickled_target_path)
-
+        # if pickled_source_path.exists() and pickled_target_path.exists():
+        #     print(
+        #         f"loading from {pickled_target_path} (pkl)... "
+        #         f"make sure data is what you need"
+        #     )
+        #     self.source = pickle_load(pickled_source_path)
+        #     self.target = pickle_load(pickled_target_path)
+        # else:
+        #     self.source = encode_file(tokenizer, text_source_path, max_source_length)
+        #     self.target = encode_file(tokenizer, text_target_path, max_target_length)
+        #     pickle_dump(self.source, pickled_source_path)
+        #     pickle_dump(self.target, pickled_target_path)
+        
+        self.source = encode_file(tokenizer, text_source_path, max_source_length)
+        self.target = encode_file(tokenizer, text_target_path, max_target_length)
         self.all_answers = None
         target_json = data_dir / f"{type_path}.target.json"
         if target_json.exists():
@@ -187,8 +219,8 @@ class SummarizationDataset(Dataset):
         kw_labels = torch.zeros(target_ids.shape).type_as(target_ids)
         for a in answers:
             a_tokens = self.tokenizer.encode(
-                a, 
-                add_special_tokens=False, 
+                a,
+                add_special_tokens=False,
                 return_tensors="pt",
             )[0]
             a_len = a_tokens.shape[0]
@@ -271,6 +303,7 @@ class SummarizationDataset(Dataset):
         return source_ids, source_mask, y
 
     def collate_fn(self, batch):
+        assert isinstance(batch, list), type(batch).mro()
         input_ids = torch.stack([x["source_ids"] for x in batch])
         masks = torch.stack([x["source_mask"] for x in batch])
         target_ids = torch.stack([x["target_ids"] for x in batch])
@@ -280,8 +313,18 @@ class SummarizationDataset(Dataset):
         if batch[0]['kw_labels'] is not None:
             kw_labels = torch.stack([x["kw_labels"] for x in batch])
             kw_labels = kw_labels[:, :y.shape[1]]
-            return {"source_ids": source_ids, "source_mask": source_mask, "target_ids": y, 'kw_labels': kw_labels}
-        return {"source_ids": source_ids, "source_mask": source_mask, "target_ids": y}
+            return {
+                "source_ids": source_ids,
+                "source_mask": source_mask,
+                "target_ids": y,
+                "kw_labels": kw_labels,
+            }
+        
+        return {
+            "source_ids": source_ids,
+            "source_mask": source_mask,
+            "target_ids": y,
+        }
 
 
 def freeze_params(model, except_para=None):

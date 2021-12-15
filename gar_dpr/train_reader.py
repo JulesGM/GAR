@@ -25,15 +25,15 @@ import torch
 from tqdm import tqdm
 import wandb
 
-from dpr.data.qa_validation import exact_match_score
-from dpr.data.reader_data import ReaderSample, get_best_spans, SpanPrediction, convert_retriever_results
-from dpr.models import init_reader_components
-from dpr.models.reader import create_reader_input, ReaderBatch, compute_loss
-from dpr.options import add_encoder_params, setup_args_gpu, set_seed, add_training_params, \
+from gar_dpr.data.qa_validation import exact_match_score
+from gar_dpr.data.reader_data import ReaderSample, get_best_spans, SpanPrediction, convert_retriever_results
+from gar_dpr.models import init_reader_components
+from gar_dpr.models.reader import create_reader_input, ReaderBatch, compute_loss
+from gar_dpr.options import add_encoder_params, setup_args_gpu, set_seed, add_training_params, \
     add_reader_preprocessing_params, set_encoder_params_from_state, get_encoder_params_state, add_tokenizer_params, \
     print_args
-from dpr.utils.data_utils import ShardedDataIterator, read_serialized_data_from_files, Tensorizer
-from dpr.utils.model_utils import get_schedule_linear, load_states_from_checkpoint, move_to_device, CheckpointState, \
+from gar_dpr.utils.data_utils import ShardedDataIterator, read_serialized_data_from_files, Tensorizer
+from gar_dpr.utils.model_utils import get_schedule_linear, load_states_from_checkpoint, move_to_device, CheckpointState, \
     get_model_file, setup_for_distributed_mode, get_model_obj, precheck_model_file
 
 logger = logging.getLogger(__name__)

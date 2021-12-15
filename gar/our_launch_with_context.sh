@@ -46,7 +46,7 @@ compute_accum () {
 import fire
 
 def main(train_bs, original_bs):
-    return round(original_bs / train_bs)
+    print(round(original_bs / train_bs), end="")
 
 if __name__ == "__main__":
     fire.Fire(main)
@@ -54,7 +54,7 @@ if __name__ == "__main__":
 ' --train_bs="$1" --original_bs="$2"
 }
 
-TRAIN_BATCH_SIZE=8
+TRAIN_BATCH_SIZE=7
 ORIGINAL_BATCH_SIZE=128
 GRADIENT_ACCUM="$(compute_accum $TRAIN_BATCH_SIZE $ORIGINAL_BATCH_SIZE)"
 
@@ -64,11 +64,11 @@ GEN_TARGET=$2 python "$SCRIPT_DIR"/train_generator.py \
 --train_batch_size "$TRAIN_BATCH_SIZE" \
 --eval_batch_size "$TRAIN_BATCH_SIZE" \
 --gradient_accumulation_steps "$GRADIENT_ACCUM" \
---ckpt_metric val-ROUGE-1 \
 --max_source_length 768 \
 --num_train_epochs 150 \
 --data_dir "$DATA_DIR" \
 --learning_rate 5e-6 \
 --backend "$3" \
---fp16 \
---fp16_opt_level O1
+--fp16
+
+# --ckpt_metric val-ROUGE-1 \
